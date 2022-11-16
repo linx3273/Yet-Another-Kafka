@@ -1,0 +1,7 @@
+#Directories
+.venv/
+__pycache__/
+.idea/
+
+#Extensions
+*.ps1
