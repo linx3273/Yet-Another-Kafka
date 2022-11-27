@@ -2,5 +2,5 @@
 __pycache__/
 .idea/
 
-#Extensions
-*.ps1
+#Files
+activate.ps1
