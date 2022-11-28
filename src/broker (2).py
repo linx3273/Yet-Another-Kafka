@@ -14,7 +14,7 @@ def client(topic):
 
     data = (s.recv(1024).decode())
 
-    print(data)
+    # print(data)
     s.close()
     return data
 
