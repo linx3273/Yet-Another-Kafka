@@ -8,8 +8,9 @@ BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(sys.argv[0]), os.pardir)
 
 
 class Broker(BaseHTTPRequestHandler):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+    def __init__(self, zoo_port, leader,*args, **kwargs):
+        self.zoo_port = zoo_port
+        self.leader = leader
         self.topics = {}    # holds topic name and file pointers
 
         self.brokers = []
@@ -19,6 +20,8 @@ class Broker(BaseHTTPRequestHandler):
         self.topic_dir = Path(BASE_DIR + '\\topics').resolve().as_posix()
         self.src_dir = Path(BASE_DIR + '\\src').resolve().as_posix()
         self.log_dir = Path(BASE_DIR + '\\logs').resolve().as_posix()
+
+        super().__init__(*args, **kwargs)
 
     def query_topics(self):
         """
@@ -55,19 +58,12 @@ class Broker(BaseHTTPRequestHandler):
                 file_pointer = open(file_dir, 'a')
                 self.topics[topic_name].append(file_pointer)
 
-    def set_response(self):
-        self.send_response(200)
-        self.send_header("Content-type", "application/json")
-        self.end_headers()
-
     def do_GET(self):
         # TODO
-        self.send_response()
-        self.wfile.write()
+        self.wfile.write("test".encode("utf-8"))
 
     def do_POST(self):
         # TODO
-        self.set_response()
         print(self.rfile.read(int(self.headers['Content-Length'])).decode('utf-8'))
 
 
