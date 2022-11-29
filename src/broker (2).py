@@ -19,24 +19,35 @@ def client(topic):
     return data
 
 
-def server(topic):
-    data = client(topic)
+# def server(topic):
+#     data = client(topic)
+#     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+#     port = 23456
+#     s.bind(('127.0.0.1', port))
+#     s.listen()
+#
+#     while True:
+#         c, addr = s.accept()
+#         # topic = c.recv(1024).decode()
+#         c.send(data.encode())
+#         c.close()
+#         break
+#     s.close()
+#     return
+
+
+if __name__ == "__main__":
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     port = 23456
     s.bind(('127.0.0.1', port))
     s.listen()
-
     while True:
+        # if sys.argv[1] == "client":
+        #     client(sys.argv[2])
+        # else:
+        #     server(sys.argv[2])
         c, addr = s.accept()
-        # topic = c.recv(1024).decode()
+        topic = c.recv(1024).decode()
+        data = client(topic)
         c.send(data.encode())
         c.close()
-        break
-    s.close()
-    return
-
-if __name__ == "__main__":
-    if sys.argv[1] == "client":
-        client(sys.argv[2])
-    else:
-        server(sys.argv[2])
