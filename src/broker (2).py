@@ -1,22 +1,16 @@
 import socket
 import sys
+import json
+import os
 
 
-def client(topic):
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-
-    producer_parent_port = 12345
-
-    s.connect(('127.0.0.1', producer_parent_port))
-
-
-    s.send(topic.encode())
-
-    data = (s.recv(1024).decode())
-
-    # print(data)
-    s.close()
-    return data
+def get_data_from_file(topic):
+    # data = {"topic": "my_topic", "data": "my_data"}
+    # data = json.dumps(data)
+    filename = 'leader.json'
+    with open(filename, "r") as file:
+        data = json.load(file)
+    return data[topic]
 
 
 # def server(topic):
@@ -35,6 +29,26 @@ def client(topic):
 #     s.close()
 #     return
 
+def receive_the_data():
+    # Receiving the new data
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    producer_parent_secondary_port = 54321
+    s.connect(('127.0.0.1', producer_parent_secondary_port))
+    new_data = s.recv(1024).decode()
+    s.close()
+    new_data=json.loads(new_data)
+    filename = 'leader.json'
+    if os.path.exists(filename):
+        with open(filename, "r") as file:
+            data = json.load(file)
+        # data.append(new_data)
+        data[new_data["topic"]] = new_data["data"]
+    else:
+        data = {}
+        data[new_data["topic"]] = new_data["data"]
+    with open(filename, "w") as file:
+        json.dump(data, file)
+
 
 if __name__ == "__main__":
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -47,7 +61,10 @@ if __name__ == "__main__":
         # else:
         #     server(sys.argv[2])
         c, addr = s.accept()
-        topic = c.recv(1024).decode()
-        data = client(topic)
-        c.send(data.encode())
-        c.close()
+        status_or_topic = c.recv(1024).decode()
+        if status_or_topic == "new_topic":
+            receive_the_data()
+        else:
+            data = get_data_from_file(status_or_topic)
+            c.send(data.encode())
+            c.close()
