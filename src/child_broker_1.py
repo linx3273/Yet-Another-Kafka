@@ -2,6 +2,18 @@ import socket
 import sys
 import json
 import os
+import threading
+import time
+
+def send_heartbeat():
+    zookeeper_heartbeat_port = 56789
+
+    while True:
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        time.sleep(1)
+        s.connect(('127.0.0.1', zookeeper_heartbeat_port))
+        s.send("Heartbeat from Broker 2\n".encode())
+        s.close()
 
 
 def get_data_from_file(topic):
@@ -51,6 +63,8 @@ def receive_the_data():
 
 
 if __name__ == "__main__":
+    heartbeat_thread = threading.Thread(target=send_heartbeat)
+    heartbeat_thread.start()
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     port = 17894
     s.bind(('127.0.0.1', port))
