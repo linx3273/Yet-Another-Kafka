@@ -52,7 +52,7 @@ def receive_the_data():
 
 if __name__ == "__main__":
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    port = 23456
+    port = 56941
     s.bind(('127.0.0.1', port))
     s.listen()
     while True:
