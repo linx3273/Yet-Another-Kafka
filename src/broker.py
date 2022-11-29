@@ -1,25 +1,29 @@
 import os
+import time
 from pathlib import Path
 import sys
 from http.server import HTTPServer, BaseHTTPRequestHandler
-
+import requests
+import constants
 
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(sys.argv[0]), os.pardir))
 
 
 class Broker(BaseHTTPRequestHandler):
-    def __init__(self, zoo_port, leader,*args, **kwargs):
-        self.zoo_port = zoo_port
-        self.leader = leader
-        self.topics = {}    # holds topic name and file pointers
+    def __init__(self, zoo_addr, leader, addr, *args, **kwargs):
+        self.zoo_addr = zoo_addr  # stores the port number that the zookeeper is hosted on
+        self.leader = leader  # True if leader, else False
+        self.addr = addr  # will hold the address of the HTTP server
 
-        self.brokers = []
-        self.producers = []
-        self.consumers = []
+        self.topics = {}  # holds topic name and file pointers
+        self.brokers = []  # holds a list of addresses of other brokers
+        self.producers = []  # holds a list of addresses of all producers
 
         self.topic_dir = Path(BASE_DIR + '\\topics').resolve().as_posix()
         self.src_dir = Path(BASE_DIR + '\\src').resolve().as_posix()
         self.log_dir = Path(BASE_DIR + '\\logs').resolve().as_posix()
+
+        self.shutdown = False  # when set true the broker will stop processes
 
         super().__init__(*args, **kwargs)
 
@@ -58,16 +62,31 @@ class Broker(BaseHTTPRequestHandler):
                 file_pointer = open(file_dir, 'a')
                 self.topics[topic_name].append(file_pointer)
 
-    def do_GET(self):
-        # TODO
-        self.wfile.write("test".encode("utf-8"))
+    def heartbeat(self):
+        """
+        Pings the zookeeper every five seconds
+        :return:
+        """
+        while not self.shutdown:
+            if self.leader:
+                r = requests.post(self.zoo_addr, data=f"//{self.addr}//")
+                time.sleep(5)
 
     def do_POST(self):
-        # TODO
+        """
+        Will handle all post requests that are sent to the HTTP Server (in this case all details sent do it by the
+        producers
+        :return:
+        """
         print(self.rfile.read(int(self.headers['Content-Length'])).decode('utf-8'))
+        # TODO
 
 
 if __name__ == "__main__":
-    server = HTTPServer(('localhost', 8000), Broker)
-    print(f"Server running on {server.server_address[0]}:{server.server_address[1]}")
+    lead = bool(int(sys.argv[1]))   # leader
+    index = int(sys.argv[2])    # index for to select one of the three preset ports
+
+    handler = (Broker, constants.ZOOKEEPER_PORT, lead, constants.BROKER_PORT[index])
+    server = HTTPServer(('localhost', constants.BROKER_PORT[index]), handler)
+    print(f"Server running on PORT - {server.server_address[1]}")
     server.serve_forever()
