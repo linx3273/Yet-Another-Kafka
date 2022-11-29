@@ -9,7 +9,7 @@ def msg_rec(channel,method,prop,body):
     # print(f"received message in 1 is : {body}, will take {t} to process")
     # time.sleep(t)
     # channel.basic_ack(delivery_tag=method.delivery_tag) 
-    print(f"SUBSCRIBER1 says hello with message : {body}") 
+    print(f"SUBSCRIBER3 says hello with message : {body}") 
     print("Finished msg processing")  
 
 connection_param = pika.ConnectionParameters('localhost')
@@ -30,8 +30,8 @@ q = channel.queue_declare(queue='',exclusive=True)
 
 # binding our queue to the desired channel
 # we can assign multiple routing keys to each of the subscriber
-# channel.queue_bind(exchange='model_with_topics',queue=q.method.queue,routing_key="sub1")
-channel.queue_bind(exchange='model_topics',queue=q.method.queue,routing_key="*.1")
+
+channel.queue_bind(exchange='model_topics',queue=q.method.queue,routing_key="#.3")
 
 # manually acknowledges the message and defining the functionality it does when it receives a new message
 channel.basic_consume(queue=q.method.queue,auto_ack=True,on_message_callback=msg_rec)
@@ -39,3 +39,5 @@ channel.basic_consume(queue=q.method.queue,auto_ack=True,on_message_callback=msg
 print("Started consuming the msg")
 
 channel.start_consuming()
+
+

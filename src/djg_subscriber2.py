@@ -9,7 +9,7 @@ def msg_rec(channel,method,prop,body):
     # print(f"received message in 1 is : {body}, will take {t} to process")
     # time.sleep(t)
     # channel.basic_ack(delivery_tag=method.delivery_tag) 
-    print(f"sub2 says hello with message : {body}") 
+    print(f"SUBSCRIBER2 says hello with message : {body}") 
     print("Finished msg processing")  
 
 connection_param = pika.ConnectionParameters('localhost')
@@ -19,7 +19,7 @@ connection = pika.BlockingConnection(connection_param)
 channel = connection.channel()
 
 #creating a queue to store the data
-channel.exchange_declare(exchange='ps_model1',exchange_type=ExchangeType.direct)
+channel.exchange_declare(exchange='model_topics',exchange_type=ExchangeType.topic)
 
 q = channel.queue_declare(queue='',exclusive=True)
 # setting the quality of service with the prefetch value as 1
@@ -29,12 +29,15 @@ q = channel.queue_declare(queue='',exclusive=True)
 # if we dont use it then by default round robin algo is impelemented
 
 # binding our queue to the desired channel
-channel.queue_bind(exchange='ps_model1',queue=q.method.queue,routing_key="sub2")
+# we can assign multiple routing keys to each of the subscriber
+
+# will get msgs from all three sub1/2/3 routing channels
+channel.queue_bind(exchange='model_topics',queue=q.method.queue,routing_key="sub.*")
+
 # manually acknowledges the message and defining the functionality it does when it receives a new message
 channel.basic_consume(queue=q.method.queue,auto_ack=True,on_message_callback=msg_rec)
 
 print("Started consuming the msg")
-channel.start_consuming()
-# messages from queue are sent to consumers in round-robin way by default
 
+channel.start_consuming()
 
