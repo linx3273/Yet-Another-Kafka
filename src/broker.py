@@ -1,3 +1,6 @@
+import datetime
+import json
+import multiprocessing
 import os
 import threading
 import time
@@ -11,30 +14,25 @@ import constants
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(sys.argv[0]), os.pardir))
 
 
-class Broker(BaseHTTPRequestHandler):
-    def __init__(self, zoo_addr, leader, addr, *args, **kwargs):
+class Broker:
+    def __init__(self, zoo_addr, leader, addr):
         self.zoo_addr = zoo_addr  # stores the port number that the zookeeper is hosted on
         self.leader = leader  # True if leader, else False
         self.addr = addr  # will hold its own PORT
 
         self.topics = {}  # holds topic name and file pointers
         self.producers = []  # holds a list of addresses of all producers
+        self.consumers = []
 
         self.brokers = constants.BROKER_PORT
-        try:
-            self.brokers.remove(self.addr)  # Stores the ports of other brokers
-        except Exception as e:
-            print(e)
+        self.brokers.remove(self.addr)  # Stores the ports of other brokers
 
         self.topic_dir = Path(BASE_DIR + '\\topics').resolve().as_posix()
         self.src_dir = Path(BASE_DIR + '\\src').resolve().as_posix()
         self.log_dir = Path(BASE_DIR + '\\logs').resolve().as_posix()
 
         self.shutdown = False  # when set true the broker will stop processes
-
         self.heartbeat()
-
-        super().__init__(*args, **kwargs)
 
     def query_topics(self):
         """
@@ -49,8 +47,7 @@ class Broker(BaseHTTPRequestHandler):
                     for file in files:
                         topic_name = Path(root).name
                         file_dir = Path(self.topic_dir + f'\\{topic_name}\\{file}').resolve().as_posix()
-                        file_pointer = open(file_dir, 'a')
-                        self.topics[topic_name].append(file_pointer)
+                        self.topics[topic_name].append(file_dir)
         else:
             os.mkdir(self.topic_dir)
 
@@ -68,8 +65,8 @@ class Broker(BaseHTTPRequestHandler):
 
             for i in range(partition_count):
                 file_dir = Path(topic_dir + f'\\{i}').resolve().as_posix()
-                file_pointer = open(file_dir, 'a')
-                self.topics[topic_name].append(file_pointer)
+                open(file_dir, "w").close()
+                self.topics[topic_name].append(file_dir)
 
     def heartbeat(self):
         """
@@ -84,18 +81,72 @@ class Broker(BaseHTTPRequestHandler):
             except:
                 pass
 
-    def start_threads(self):
+    def start_heartbeat(self):
         """
         Will start all the threads required for communication
         :return:
         """
+        t = threading.Thread(target=self.heartbeat())
+        t.daemon = True
+        t.start()
 
-        t = []
-        t.append(threading.Thread(target=self.heartbeat()))
+    def send_sync_data(self):
+        """
+        Broker will generate its metadata as a message and forward to other brokers
+        :return:
+        """
+        data = {
+            "producers": self.producers,
+            "consumers": self.consumers,
+            "topics": self.topics
+        }
 
-        for i in t:
-            i.daemon = True
-            i.start()
+        inc = constants.to_json(frm="broker", port=self.addr, typ="sync", data=data)
+
+        for i in self.brokers:
+            r = requests.post(f"{constants.LOCALHOST}:{i}", data=inc)
+
+    def thread_send_sync_data(self):
+        p = threading.Thread(target=self.send_sync_data)
+        p.start()
+
+    def parse_sync_data(self, data):
+        """
+        Extract data from the sync message sent from broker and update metadata
+        :return:
+        """
+        self.producers = data["producers"]
+        self.consumers = data["consumers"]
+        self.topics = data["topics"]
+
+    def write_to_partition(self, topic_name, msg):
+        """
+        Write the message received from publisher to file-system. Writes to the file with the least number of lines
+        :return:
+        """
+        d = {}
+        for i in self.topics[topic_name]:
+            d[i] = 0
+
+        for i in d:
+            with open(i, 'r') as f:
+                d[i] = len(f.readlines())
+
+        d = {k: v for k, v in sorted(d.items(), key=lambda item: item[1])}
+
+        with open(list(d.keys())[0], 'a') as f:
+            data = {
+                "timestamp": datetime.datetime.now().timestamp(),
+                "msg": msg
+                    }
+            f.write(json.dump(data))
+
+    def collect_from_partition(self, topic, port):
+        """
+        Will read the partition for a given topic and read all the data from it
+        :return:
+        """
+
 
 
 class RequestHandler(BaseHTTPRequestHandler):
@@ -113,26 +164,57 @@ class RequestHandler(BaseHTTPRequestHandler):
         producers
         :return:
         """
-        inc = self.rfile.read(int(self.headers['Content-Length'])).decode('utf-8')
+        inc = constants.to_dict(
+            self.rfile.read(int(self.headers['Content-Length'])).decode('utf-8')
+        )
 
-        if "//register//consumer//" in inc:     # a new consumer wants to join; extract the port number and save it
-            pass
+        if inc['from'] == "zookeeper":
+            if inc["type"] == "set-leader":
+                # receives instruction from zookeeper to become the leader
+                broker.leader = 1
 
-        elif inc == constants.SET_LEADER:   # leader node has died to zookeeper is instructing this broker to become leader
-            broker.leader = 1
+            if inc["type"] == "sync":
+                # received by leader
+                # send all relevant metadata to the new broker
+                broker.thread_send_sync_data()
 
-        elif "//producer//" in inc:     # data sent by producer; process it and send to other nodes
-            pass
-            if broker.leader:
-                # forward data to other brokers as well
-                pass
+        elif inc["from"] == "broker":
+            if not broker.leader and inc["type"] == "sync":
+                # leader node will transfer all metadata to new broker
+                p = threading.Thread(target=broker.parse_sync_data, args=[inc['data']])
+                p.start()
 
-        elif "//update//" in inc:   # add data sent by leader node to queue
-            pass
+        elif inc["from"] == "producer":
+            if inc["type"] == "register":
+                broker.create_topic(inc["topic"])
+                broker.producers.append(inc["port"])
+                # sync the metadata
+                broker.thread_send_sync_data()
 
-        elif "//pop-top//" in inc:      # remove the front element in the queue
-            pass
-        # TODO
+            elif inc["type"] == "publish":
+                # collects the message and adds to queue + stores to partition
+                # will also push data to other brokers
+                p = threading.Thread(target=broker.write_to_partition, args=[inc['topic'], inc['data']])
+                p.start()
+
+                # sending published data to partitions
+                # TODO
+
+        elif inc["from"] == "consumer":
+            if inc["type"] == "register":
+                # added consumer to the pool of consumers and if needed to create topic
+                broker.create_topic(inc["topic"])
+                broker.consumers.append(inc["port"])
+                # sync the metadata
+                broker.thread_send_sync_data()
+
+            elif inc["type"] == "from-beginning":
+                # give information regarding the files so that the consumer can read all old data
+                broker.create_topic(inc["topic"])
+                broker.consumers.append(inc["port"])
+                # sync the metadata
+                broker.thread_send_sync_data()
+                # TODO
 
 
 if __name__ == "__main__":
