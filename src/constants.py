@@ -15,7 +15,7 @@ def to_json(frm=None, port=None, typ=None, topic=None, data=None):
         {
             "from": frm,        # zookeeper broker producer consumer
             "port": port,
-            "type": typ,        # set-leader, publish, register
+            "type": typ,        # set-leader, publish, register, from-beginning, sync
             "topic": topic,     # default is None
             "data": data,       # default is Blank
         },
@@ -25,7 +25,6 @@ def to_json(frm=None, port=None, typ=None, topic=None, data=None):
 
 def to_dict(val):
     return json.loads(val)
-
 
 
 '''

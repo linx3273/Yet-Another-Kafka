@@ -9,6 +9,7 @@ import sys
 import subprocess
 import multiprocessing
 import logging
+from sys import platform
 
 
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(sys.argv[0]), os.pardir))
@@ -51,7 +52,17 @@ class ZooKeeper:
         logging.info(f"Starting broker with port {port}")
         broker = Path(BASE_DIR + '\\src\\broker.py').resolve().as_posix()
 
-        p = multiprocessing.Process(target=subprocess.call, args=[f"python {broker} {leader} {port}"], kwargs={"shell": True})
+        if platform == "linux" or platform == "linux2":
+            p = multiprocessing.Process(
+                                            target=subprocess.call,
+                                            args=[f"python {broker} {leader} {port}"],
+                                            kwargs={"shell": True, "creationflags": subprocess.CREATE_NEW_CONSOLE}
+                                        )
+        elif platform == "win32":
+            p = multiprocessing.Process(
+                                        target=os.system,
+                                        args=[f"start cmd /k python {broker} {leader} {port}"]
+                                    )
         p.daemon = True    # if zookeeper dies, the processes are killed
         p.start()
 
@@ -86,7 +97,7 @@ class ZooKeeper:
                     self.spawn_broker(port, 0)
 
                 # inform the leader that a new broker has been created
-                inc = constants.to_json(frm="zookeeper", typ="new-broker", port=self.port, data=port)
+                inc = constants.to_json(frm="zookeeper", typ="sync", port=self.port, data=port)
                 r = requests.post(f"{constants.LOCALHOST}:{self.leader}", data=inc)
 
             time.sleep(constants.INTERVALS)
@@ -152,19 +163,19 @@ class RequestHandler(BaseHTTPRequestHandler):
             self.rfile.read(int(self.headers['Content-Length'])).decode('utf-8')
         )
 
-        if inc["frm"] == "broker" and inc["port"] == constants.BROKER_PORT[0]:  # monitoring broker with PORT 8001
+        if inc["from"] == "broker" and inc["port"] == constants.BROKER_PORT[0]:  # monitoring broker with PORT 8001
             logging.info(f"Pulse from {inc['port']}")
             zookeeper.brokers[constants.BROKER_PORT[0]] = constants.TIME_LIMIT
 
-        elif inc["frm"] == "broker" and inc["port"] == constants.BROKER_PORT[1]:  # monitoring broker with PORT 8002
+        elif inc["from"] == "broker" and inc["port"] == constants.BROKER_PORT[1]:  # monitoring broker with PORT 8002
             logging.info(f"Pulse from {inc['port']}")
             zookeeper.brokers[constants.BROKER_PORT[1]] = constants.TIME_LIMIT
 
-        elif inc["frm"] == "broker" and inc["port"] == constants.BROKER_PORT[2]:  # monitoring broker with PORT 8003
+        elif inc["from"] == "broker" and inc["port"] == constants.BROKER_PORT[2]:  # monitoring broker with PORT 8003
             logging.info(f"Pulse from {inc['port']}")
             zookeeper.brokers[constants.BROKER_PORT[2]] = constants.TIME_LIMIT
 
-        elif inc["frm"] == "producer":  # provide producer info about leader broker
+        elif inc["from"] == "producer":  # provide producer info about leader broker
             try:
                 zookeeper.producers.append(inc["port"])
                 inf = constants.to_json(frm="zookeeper", typ="set-leader", port=self.port, data=self.leader)
@@ -172,7 +183,7 @@ class RequestHandler(BaseHTTPRequestHandler):
             except:
                 zookeeper.producers.remove(inc["port"])
 
-        elif inc["frm"] == "consumer":  # detected a new consumer, re-route it to leader broker
+        elif inc["from"] == "consumer":  # detected a new consumer, re-route it to leader broker
             inf = constants.to_json(frm="zookeeper", typ="set-leader", port=self.port, data=self.leader)
             r = requests.post(f"{constants.LOCALHOST}:{inc['port']}", data=inf)
 
