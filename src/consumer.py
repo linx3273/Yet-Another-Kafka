@@ -73,7 +73,11 @@ class RequestHandler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    consumer = Consumer(['127.0.0.1', '8000'], 'test', typ="from-beginning")
+    consumer = Consumer(
+                            ['127.0.0.1', '8000'],
+                            input("Enter topic name: "),
+                            typ=input("Choose between 'register/from-beginning': ")
+                        )
 
     server = HTTPServer(("localhost", 0), RequestHandler)
     print(f"Listening on {server.server_address[0]}:{server.server_address[1]}")

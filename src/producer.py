@@ -78,7 +78,10 @@ def run():
 
 
 if __name__ == "__main__":
-    producer = Producer(constants.ZOOKEEPER_PORT, "test")
+    producer = Producer(
+                            constants.ZOOKEEPER_PORT,
+                            input("Enter topic name: ")
+                        )
 
     server = HTTPServer(("localhost", 0), RequestHandler)
     print(f"Listening on {server.server_address[0]}:{server.server_address[1]}")
