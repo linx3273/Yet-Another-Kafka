@@ -180,6 +180,7 @@ class Broker:
         for i in self.consumers:
             r = requests.post(f"{constants.LOCALHOST}:{i}", data=new_inc)
 
+
 class RequestHandler(BaseHTTPRequestHandler):
     global broker
 
@@ -234,7 +235,6 @@ class RequestHandler(BaseHTTPRequestHandler):
 
                 # forwarding data to consumers
 
-
         elif inc["from"] == "consumer":
             if inc["type"] == "register":
                 # added consumer to the pool of consumers and if needed to create topic
@@ -259,6 +259,7 @@ if __name__ == "__main__":
     port = int(sys.argv[2])    # index for to select one of the three preset ports
 
     broker = Broker(constants.ZOOKEEPER_PORT, lead, port)
+    broker.query_topics()
     broker.start_heartbeat()
 
     server = HTTPServer(('localhost', port), RequestHandler)

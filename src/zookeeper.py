@@ -42,7 +42,8 @@ class ZooKeeper:
                 self.spawn_broker(i, 0)
         logging.info("Started all brokers")
 
-    def spawn_broker(self, port, leader):
+    @staticmethod
+    def spawn_broker(port, leader):
         """
         Method to spawn one Broker using multiprocessing library
         :param port: Port Number that will be used by the broker
