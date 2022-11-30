@@ -1,6 +1,7 @@
 import datetime
 import json
 import multiprocessing
+import operator
 import os
 import threading
 import time
@@ -32,7 +33,6 @@ class Broker:
         self.log_dir = Path(BASE_DIR + '\\logs').resolve().as_posix()
 
         self.shutdown = False  # when set true the broker will stop processes
-        self.heartbeat()
 
     def query_topics(self):
         """
@@ -141,13 +141,44 @@ class Broker:
                     }
             f.write(json.dump(data))
 
-    def collect_from_partition(self, topic, port):
+    def send_from_beginning(self, topic, port):
         """
         Will read the partition for a given topic and read all the data from it
         :return:
         """
+        file_path = self.topics[topic]
 
+        stash = []
 
+        for i in file_path:
+            with open(i, 'r') as f:
+                stash += f.readlines()
+
+        for i in range(len(stash)):
+            stash[i] = stash[i][:-1]    # removing new line character
+
+        for i in range(len(stash)):
+            stash[i] = json.loads(stash[i])     # converting the json format to dictionaries
+
+        sorted(stash, key=operator.itemgetter('timestamp')) # sorting the data based on time stamp
+
+        # removing timestamp details from the text
+        for i in range(len(stash)):
+            stash[i] = stash[i]['msg']
+
+        for i in stash:
+            inc = constants.to_json(frm="broker", port=self.addr, typ="publish", topic=topic, data=i)
+            r = requests.post(f"{constants.LOCALHOST}:{port}", data=i)
+
+    def push_to_consumer(self, inc):
+        new_inc = inc
+        new_inc['from'] = "broker"
+        new_inc['port'] = self.addr
+
+        new_inc = json.dumps(new_inc)
+
+        for i in self.consumers:
+            r = requests.post(f"{constants.LOCALHOST}:{i}", data=new_inc)
 
 class RequestHandler(BaseHTTPRequestHandler):
     global broker
@@ -194,11 +225,15 @@ class RequestHandler(BaseHTTPRequestHandler):
             elif inc["type"] == "publish":
                 # collects the message and adds to queue + stores to partition
                 # will also push data to other brokers
+                if inc['data'] == "pls_die_leader":
+                    sys.exit()
+
+                # sending published data to partitions
                 p = threading.Thread(target=broker.write_to_partition, args=[inc['topic'], inc['data']])
                 p.start()
 
-                # sending published data to partitions
-                # TODO
+                # forwarding data to consumers
+
 
         elif inc["from"] == "consumer":
             if inc["type"] == "register":
@@ -212,9 +247,11 @@ class RequestHandler(BaseHTTPRequestHandler):
                 # give information regarding the files so that the consumer can read all old data
                 broker.create_topic(inc["topic"])
                 broker.consumers.append(inc["port"])
+
                 # sync the metadata
                 broker.thread_send_sync_data()
-                # TODO
+                p = threading.Thread(target=broker.send_from_beginning, args=[inc["topic"], inc["port"]])
+                p.start()
 
 
 if __name__ == "__main__":
@@ -222,6 +259,7 @@ if __name__ == "__main__":
     port = int(sys.argv[2])    # index for to select one of the three preset ports
 
     broker = Broker(constants.ZOOKEEPER_PORT, lead, port)
+    broker.start_heartbeat()
 
     server = HTTPServer(('localhost', port), RequestHandler)
     print(f"Server running on PORT - {server.server_address[0]}:{server.server_address[1]}")
