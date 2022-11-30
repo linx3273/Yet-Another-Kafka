@@ -77,15 +77,37 @@ class Broker(BaseHTTPRequestHandler):
         Pings the zookeeper every five seconds
         :return:
         """
-        print("Heartbeat")
+        print("Heartbeat {}".format(self.addr))
         while not self.shutdown:
             try:
                 time.sleep(constants.INTERVALS)
                 r = requests.post(f"http://127.0.0.1:{self.zoo_addr}", data=f"//{self.addr}//")
-                print(r.status_code)
                 print("Heartbeat")
             except Exception as e:
                 print(e)
+
+    def start_threads(self):
+        """
+        Will start all the threads required for communication
+        :return:
+        """
+
+        t = []
+
+        t.append(threading.Thread(target=self.heartbeat()))
+
+        for i in t:
+            i.daemon = True
+            i.start()
+
+class RequestHandler(BaseHTTPRequestHandler):
+    global broker
+
+    def __init__(self, *args, **kwargs):
+        super().__init__()
+
+    def do_GET(self):
+        pass
 
     def do_POST(self):
         """
@@ -95,15 +117,15 @@ class Broker(BaseHTTPRequestHandler):
         """
         inc = self.rfile.read(int(self.headers['Content-Length'])).decode('utf-8')
 
-        if "//register//consumer//" in inc:     # a new consumer wants to join; extract the port number and save it
+        if "//register//conssumer//" in inc:     # a new consumer wants to join; extract the port number and save it
             pass
 
         elif inc == "//set-leader//":   # leader node has died to zookeeper is instructing this broker to become leader
-            self.leader = 1
+            broker.leader = 1
 
         elif "//producer//" in inc:     # data sent by producer; process it and send to other nodes
             pass
-            if self.leader:
+            if broker.leader:
                 # forward data to other brokers as well
                 pass
 
@@ -114,18 +136,13 @@ class Broker(BaseHTTPRequestHandler):
             pass
         # TODO
 
-    def start_threads(self):
-        pass
-
-    def do_GET(self):
-        pass
-
 
 if __name__ == "__main__":
     lead = bool(int(sys.argv[1]))   # leader
     port = int(sys.argv[2])    # index for to select one of the three preset ports
 
-    handler = partial(Broker, constants.ZOOKEEPER_PORT, lead, port)
-    server = HTTPServer(('localhost', port), handler)
+    broker = Broker(constants.ZOOKEEPER_PORT, lead, port)
+
+    server = HTTPServer(('localhost', port), RequestHandler)
     print(f"Server running on PORT - {server.server_address[0]}:{server.server_address[1]}")
     server.serve_forever()

@@ -7,22 +7,19 @@ from pathlib import Path
 import os
 import sys
 import subprocess
+import multiprocessing
 
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(sys.argv[0]), os.pardir))
 
 
-class Zookeeper(BaseHTTPRequestHandler):
-    def __init__(self, *args, **kwargs):
+class ZooKeeper:
+    def __init__(self):
         self.brokers = {
                             constants.BROKER_PORT[0]: constants.TIME_LIMIT,
                             constants.BROKER_PORT[1]: constants.TIME_LIMIT,
                             constants.BROKER_PORT[2]: constants.TIME_LIMIT
                         }
-        self.leader = None  # holds port of leader node
-
-        self.run()
-
-        super().__init__(*args, **kwargs)
+        self.leader = self.elect_leader()   # holds port of leader node
 
     def start_all_brokers(self):
         """
@@ -42,7 +39,7 @@ class Zookeeper(BaseHTTPRequestHandler):
 
     def spawn_broker(self, port, leader):
         """
-        Method to spawn one Broker
+        Method to spawn one Broker using multiprocessing library
         :param port: Port Number that will be used by the broker
         :param leader: If 1, the spawned broker is a leader, 0 for not leader
         :return:
@@ -50,8 +47,8 @@ class Zookeeper(BaseHTTPRequestHandler):
         print(f"Starting broker with port {port}")
         broker = Path(BASE_DIR + '\\src\\broker.py').resolve().as_posix()
 
-        p = threading.Thread(target=subprocess.call, args=[f"python {broker} {leader} {port}"], kwargs={"Shell": True})
-        p.daemon = True     # if zookeeper dies, the processes are killed
+        p = multiprocessing.Process(target=subprocess.call, args=[f"python {broker} {leader} {port}"], kwargs={"shell": True})
+        p.daemon = True    # if zookeeper dies, the processes are killed
         p.start()
 
         print("Done")
@@ -65,7 +62,7 @@ class Zookeeper(BaseHTTPRequestHandler):
         """
         while True:
             if self.brokers[port] == 0:
-            # countdown of broker reached 0 assuming it has crashed, will attempt to spawn new broker
+                # countdown of broker reached 0 assuming it has crashed, will attempt to spawn new broker
 
                 if port == list(self.brokers.keys())[0]:
                     # leader broker has died, so elect new leader
@@ -82,8 +79,8 @@ class Zookeeper(BaseHTTPRequestHandler):
                     pass
                 print(f"{port} Died")
 
-            time.sleep(1)
-            self.brokers[port] -= 1
+            time.sleep(5)
+            self.brokers[port] -= 5
 
     def elect_leader(self):
         """
@@ -100,42 +97,12 @@ class Zookeeper(BaseHTTPRequestHandler):
         # TODO
         r = requests.post()
 
-    def do_POST(self):
-        """
-        Handles all the POST requests sent to the Zookeeper and manages them accordingly
-        :return:
-        """
-        inc = self.rfile.read(int(self.headers['Content-Length'])).decode('utf-8')
-
-        if inc == f"//{constants.BROKER_PORT[0]}//":   # monitoring broker with PORT 8001
-            print("Pulse from 8001")
-            self.brokers[constants.BROKER_PORT[0]] = constants.TIME_LIMIT
-
-        elif inc == f"//{constants.BROKER_PORT[0]}//":     # monitoring broker with PORT 8002
-            print("Pulse from 8002")
-            self.brokers[constants.BROKER_PORT[1]] = constants.TIME_LIMIT
-
-        elif inc == f"//{constants.BROKER_PORT[0]}//":     # monitoring broker with PORT 8003
-            print("Pulse from 8003")
-            self.brokers[constants.BROKER_PORT[2]] = constants.TIME_LIMIT
-
-        elif "//producer//" in inc:     # obtained message from producer
-            # TODO
-            pass
-
-        elif "//consumer//" in inc:     # detected a new consumer, re-route it to leader broker
-            # TODO
-            r = requests.post()
-
-    def do_GET(self):
-        pass
-
     def run(self):
         """
         Handles all method callbacks to handle all launches during __init__ phase including the threads
         :return:
         """
-        # self.start_all_brokers()
+        self.start_all_brokers()
 
         t = []
         for i in constants.BROKER_PORT:
@@ -148,7 +115,48 @@ class Zookeeper(BaseHTTPRequestHandler):
             i.start()
 
 
+class RequestHandler(BaseHTTPRequestHandler):
+    global zookeeper
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    def do_GET(self):
+        print(zookeeper.leader)
+        pass
+
+    def do_POST(self):
+        """
+        Handles all the POST requests sent to the Zookeeper and manages them accordingly
+        :return:
+        """
+        inc = self.rfile.read(int(self.headers['Content-Length'])).decode('utf-8')
+
+        if inc == f"//{constants.BROKER_PORT[0]}//":  # monitoring broker with PORT 8001
+            print("Pulse from 8001")
+            zookeeper.brokers[constants.BROKER_PORT[0]] = constants.TIME_LIMIT
+
+        elif inc == f"//{constants.BROKER_PORT[1]}//":  # monitoring broker with PORT 8002
+            print("Pulse from 8002")
+            zookeeper.brokers[constants.BROKER_PORT[1]] = constants.TIME_LIMIT
+
+        elif inc == f"//{constants.BROKER_PORT[2]}//":  # monitoring broker with PORT 8003
+            print("Pulse from 8003")
+            zookeeper.brokers[constants.BROKER_PORT[2]] = constants.TIME_LIMIT
+
+        elif "//producer//" in inc:  # obtained message from producer
+            # TODO
+            pass
+
+        elif "//consumer//" in inc:  # detected a new consumer, re-route it to leader broker
+            # TODO
+            r = requests.post()
+
+
 if __name__ == "__main__":
-    server = HTTPServer(('localhost', constants.ZOOKEEPER_PORT), Zookeeper)
+    zookeeper = ZooKeeper()
+    zookeeper.run()
+
+    server = HTTPServer(('localhost', constants.ZOOKEEPER_PORT), RequestHandler)
     print(f"Server running on {server.server_address[0]}:{server.server_address[1]}")
     server.serve_forever()
