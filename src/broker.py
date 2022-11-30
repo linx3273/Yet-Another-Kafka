@@ -6,7 +6,6 @@ import sys
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import requests
 import constants
-from functools import partial
 
 
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(sys.argv[0]), os.pardir))
@@ -77,14 +76,13 @@ class Broker(BaseHTTPRequestHandler):
         Pings the zookeeper every five seconds
         :return:
         """
-        print("Heartbeat {}".format(self.addr))
         while not self.shutdown:
             try:
                 time.sleep(constants.INTERVALS)
-                r = requests.post(f"http://127.0.0.1:{self.zoo_addr}", data=f"//{self.addr}//")
-                print("Heartbeat")
-            except Exception as e:
-                print(e)
+                inf = constants.to_json(frm="broker", port=self.addr, typ="pulse")
+                r = requests.post(f"{constants.LOCALHOST}:{self.zoo_addr}", data=inf)
+            except:
+                pass
 
     def start_threads(self):
         """
@@ -93,12 +91,12 @@ class Broker(BaseHTTPRequestHandler):
         """
 
         t = []
-
         t.append(threading.Thread(target=self.heartbeat()))
 
         for i in t:
             i.daemon = True
             i.start()
+
 
 class RequestHandler(BaseHTTPRequestHandler):
     global broker
@@ -117,10 +115,10 @@ class RequestHandler(BaseHTTPRequestHandler):
         """
         inc = self.rfile.read(int(self.headers['Content-Length'])).decode('utf-8')
 
-        if "//register//conssumer//" in inc:     # a new consumer wants to join; extract the port number and save it
+        if "//register//consumer//" in inc:     # a new consumer wants to join; extract the port number and save it
             pass
 
-        elif inc == "//set-leader//":   # leader node has died to zookeeper is instructing this broker to become leader
+        elif inc == constants.SET_LEADER:   # leader node has died to zookeeper is instructing this broker to become leader
             broker.leader = 1
 
         elif "//producer//" in inc:     # data sent by producer; process it and send to other nodes

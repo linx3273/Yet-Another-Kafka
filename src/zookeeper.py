@@ -8,6 +8,8 @@ import os
 import sys
 import subprocess
 import multiprocessing
+import logging
+
 
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(sys.argv[0]), os.pardir))
 
@@ -19,15 +21,17 @@ class ZooKeeper:
                             constants.BROKER_PORT[1]: constants.TIME_LIMIT,
                             constants.BROKER_PORT[2]: constants.TIME_LIMIT
                         }
-        self.leader = self.elect_leader()   # holds port of leader node
+        self.port = constants.ZOOKEEPER_PORT
+        self.leader = self.elect_leader()
+        self.producers = []  # holds a list of all producers
 
     def start_all_brokers(self):
         """
         Method to call start_broker multiple times and thus spawn the brokers
         :return:
         """
-        print("Starting brokers")
-        leader = self.elect_leader()
+        logging.info("Starting brokers")
+        leader = self.leader
         for i in self.brokers:
             if leader == i:
                 # if current port obtained from loop matches chosen leader port; set leader bit to 1
@@ -35,7 +39,7 @@ class ZooKeeper:
             else:
                 # current port obtained from loop does not match chosen leader port; set leader bit to 0
                 self.spawn_broker(i, 0)
-        print("Started all brokers")
+        logging.info("Started all brokers")
 
     def spawn_broker(self, port, leader):
         """
@@ -44,43 +48,61 @@ class ZooKeeper:
         :param leader: If 1, the spawned broker is a leader, 0 for not leader
         :return:
         """
-        print(f"Starting broker with port {port}")
+        logging.info(f"Starting broker with port {port}")
         broker = Path(BASE_DIR + '\\src\\broker.py').resolve().as_posix()
 
         p = multiprocessing.Process(target=subprocess.call, args=[f"python {broker} {leader} {port}"], kwargs={"shell": True})
         p.daemon = True    # if zookeeper dies, the processes are killed
         p.start()
 
-        print("Done")
-
     def monitor_heartbeat(self, port):
         """
-        Will decrement the self.broker values for each port. If it reaches zero it'll assume that the broker has died
+        Will decrement the broker values for each port. If it reaches zero it'll assume that the broker has died
         and will attempt to re-start it
         :param port: Will monitor a broker using the particular PORT
         :return:
         """
         while True:
             if self.brokers[port] == 0:
+                logging.warning(f"{port} Died")
                 # countdown of broker reached 0 assuming it has crashed, will attempt to spawn new broker
 
                 if port == list(self.brokers.keys())[0]:
                     # leader broker has died, so elect new leader
-                    # del self.brokers[port]
-                    # self.brokers[port] = constants.TIME_LIMIT
+                    del self.brokers[port]
+                    self.brokers[port] = constants.TIME_LIMIT
 
-                    # lead = self.elect_leader()
+                    self.leader = self.elect_leader()
                     # send post request to chosen broker and inform it to become leader and restart the dead broker
-                    # TODO
-                    pass
+                    inc = constants.to_json(frm="zookeeper", typ="set-leader", port=self.port, data=self.leader)
+                    r = requests.post(f"{constants.LOCALHOST}:{self.leader}", data=inc)
+
+                    self.inform_producers()     # informs producers of the newly elected leader broker
+                    # respawn dead broker as non leader
+                    self.spawn_broker(port, 0)
+
                 else:
                     # non leader broker has died, spawn new broker in its place
-                    # self.spawn_broker(port, 0)
-                    pass
-                print(f"{port} Died")
+                    self.spawn_broker(port, 0)
 
-            time.sleep(5)
-            self.brokers[port] -= 5
+                # inform the leader that a new broker has been created
+                inc = constants.to_json(frm="zookeeper", typ="new-broker", port=self.port, data=port)
+                r = requests.post(f"{constants.LOCALHOST}:{self.leader}", data=inc)
+
+            time.sleep(constants.INTERVALS)
+            self.brokers[port] -= constants.INTERVALS
+
+    def inform_producers(self):
+        """
+        Inform all producers of the update leader
+        :return:
+        """
+        for i in self.producers:
+            try:
+                inf = constants.to_json(frm="zookeeper", typ="set-leader", port=self.port, data=self.leader)
+                r = requests.post(f"{constants.LOCALHOST}:{i}", data=inf)
+            except:
+                self.producers.remove(i)
 
     def elect_leader(self):
         """
@@ -89,14 +111,6 @@ class ZooKeeper:
         """
         return list(self.brokers.keys())[0]
 
-    def change_leader(self):
-        """
-        Will send instruction to an active broker to become the leader
-        :return:
-        """
-        # TODO
-        r = requests.post()
-
     def run(self):
         """
         Handles all method callbacks to handle all launches during __init__ phase including the threads
@@ -104,6 +118,7 @@ class ZooKeeper:
         """
         self.start_all_brokers()
 
+        # creating threads to monitor all brokers
         t = []
         for i in constants.BROKER_PORT:
             t.append(
@@ -122,7 +137,10 @@ class RequestHandler(BaseHTTPRequestHandler):
         super().__init__(*args, **kwargs)
 
     def do_GET(self):
-        print(zookeeper.leader)
+        """
+        Handles all the GET requests sent to the Zookeeper and manages them accordingly
+        :return:
+        """
         pass
 
     def do_POST(self):
@@ -130,30 +148,37 @@ class RequestHandler(BaseHTTPRequestHandler):
         Handles all the POST requests sent to the Zookeeper and manages them accordingly
         :return:
         """
-        inc = self.rfile.read(int(self.headers['Content-Length'])).decode('utf-8')
+        inc = constants.to_dict(
+            self.rfile.read(int(self.headers['Content-Length'])).decode('utf-8')
+        )
 
-        if inc == f"//{constants.BROKER_PORT[0]}//":  # monitoring broker with PORT 8001
-            print("Pulse from 8001")
+        if inc["frm"] == "broker" and inc["port"] == constants.BROKER_PORT[0]:  # monitoring broker with PORT 8001
+            logging.info(f"Pulse from {inc['port']}")
             zookeeper.brokers[constants.BROKER_PORT[0]] = constants.TIME_LIMIT
 
-        elif inc == f"//{constants.BROKER_PORT[1]}//":  # monitoring broker with PORT 8002
-            print("Pulse from 8002")
+        elif inc["frm"] == "broker" and inc["port"] == constants.BROKER_PORT[1]:  # monitoring broker with PORT 8002
+            logging.info(f"Pulse from {inc['port']}")
             zookeeper.brokers[constants.BROKER_PORT[1]] = constants.TIME_LIMIT
 
-        elif inc == f"//{constants.BROKER_PORT[2]}//":  # monitoring broker with PORT 8003
-            print("Pulse from 8003")
+        elif inc["frm"] == "broker" and inc["port"] == constants.BROKER_PORT[2]:  # monitoring broker with PORT 8003
+            logging.info(f"Pulse from {inc['port']}")
             zookeeper.brokers[constants.BROKER_PORT[2]] = constants.TIME_LIMIT
 
-        elif "//producer//" in inc:  # obtained message from producer
-            # TODO
-            pass
+        elif inc["frm"] == "producer":  # provide producer info about leader broker
+            try:
+                zookeeper.producers.append(inc["port"])
+                inf = constants.to_json(frm="zookeeper", typ="set-leader", port=self.port, data=self.leader)
+                r = requests.post(f"{constants.LOCALHOST}:{inc['port']}", data=inf)
+            except:
+                zookeeper.producers.remove(inc["port"])
 
-        elif "//consumer//" in inc:  # detected a new consumer, re-route it to leader broker
-            # TODO
-            r = requests.post()
+        elif inc["frm"] == "consumer":  # detected a new consumer, re-route it to leader broker
+            inf = constants.to_json(frm="zookeeper", typ="set-leader", port=self.port, data=self.leader)
+            r = requests.post(f"{constants.LOCALHOST}:{inc['port']}", data=inf)
 
 
 if __name__ == "__main__":
+    logging.basicConfig(stream=sys.stdout, level=logging.DEBUG)
     zookeeper = ZooKeeper()
     zookeeper.run()
 
