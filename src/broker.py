@@ -1,6 +1,5 @@
 import datetime
 import json
-import multiprocessing
 import operator
 import os
 import threading
@@ -73,22 +72,10 @@ class Broker:
         Pings the zookeeper every five seconds
         :return:
         """
-        while not self.shutdown:
-            try:
-                time.sleep(constants.INTERVALS)
-                inf = constants.to_json(frm="broker", port=self.addr, typ="pulse")
-                r = requests.post(f"{constants.LOCALHOST}:{self.zoo_addr}", data=inf)
-            except:
-                pass
-
-    def start_heartbeat(self):
-        """
-        Will start all the threads required for communication
-        :return:
-        """
-        t = threading.Thread(target=self.heartbeat())
-        t.daemon = True
-        t.start()
+        while True:
+            time.sleep(constants.INTERVALS)
+            inf = constants.to_json(frm="broker", port=self.addr, typ="pulse")
+            r = requests.post(f"{constants.LOCALHOST}:{self.zoo_addr}", data=inf)
 
     def send_sync_data(self):
         """
@@ -108,6 +95,7 @@ class Broker:
 
     def thread_send_sync_data(self):
         p = threading.Thread(target=self.send_sync_data)
+        p.daemon = True
         p.start()
 
     def parse_sync_data(self, data):
@@ -139,7 +127,7 @@ class Broker:
                 "timestamp": datetime.datetime.now().timestamp(),
                 "msg": msg
                     }
-            f.write(json.dump(data))
+            f.write(f"{json.dumps(data)}\n")
 
     def send_from_beginning(self, topic, port):
         """
@@ -160,7 +148,7 @@ class Broker:
         for i in range(len(stash)):
             stash[i] = json.loads(stash[i])     # converting the json format to dictionaries
 
-        sorted(stash, key=operator.itemgetter('timestamp')) # sorting the data based on time stamp
+        sorted(stash, key=operator.itemgetter('timestamp'))     # sorting the data based on time stamp
 
         # removing timestamp details from the text
         for i in range(len(stash)):
@@ -185,10 +173,13 @@ class RequestHandler(BaseHTTPRequestHandler):
     global broker
 
     def __init__(self, *args, **kwargs):
-        super().__init__()
+        super().__init__(*args, **kwargs)
 
     def do_GET(self):
-        pass
+        self.send_response(200)
+        self.send_header('Content-type', 'text/plain')
+        self.end_headers()
+        self.wfile.write(bytes("Server Active", "utf-8"))
 
     def do_POST(self):
         """
@@ -199,6 +190,9 @@ class RequestHandler(BaseHTTPRequestHandler):
         inc = constants.to_dict(
             self.rfile.read(int(self.headers['Content-Length'])).decode('utf-8')
         )
+        self.send_response(200)
+        self.send_header('Content-type', 'application/json')
+        self.end_headers()
 
         if inc['from'] == "zookeeper":
             if inc["type"] == "set-leader":
@@ -259,9 +253,12 @@ if __name__ == "__main__":
     port = int(sys.argv[2])    # index for to select one of the three preset ports
 
     broker = Broker(constants.ZOOKEEPER_PORT, lead, port)
-    broker.query_topics()
-    broker.start_heartbeat()
 
     server = HTTPServer(('localhost', port), RequestHandler)
-    print(f"Server running on PORT - {server.server_address[0]}:{server.server_address[1]}")
-    server.serve_forever()
+    print(f"Server running on - {server.server_address[0]}:{server.server_address[1]}")
+    th = threading.Thread(target=server.serve_forever)
+    th.daemon = True
+    th.start()
+
+    broker.query_topics()
+    broker.heartbeat()

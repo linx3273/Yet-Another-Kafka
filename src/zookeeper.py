@@ -41,6 +41,7 @@ class ZooKeeper:
                 # current port obtained from loop does not match chosen leader port; set leader bit to 0
                 self.spawn_broker(i, 0)
         logging.info("Started all brokers")
+        pass
 
     @staticmethod
     def spawn_broker(port, leader):
@@ -153,7 +154,10 @@ class RequestHandler(BaseHTTPRequestHandler):
         Handles all the GET requests sent to the Zookeeper and manages them accordingly
         :return:
         """
-        pass
+        self.send_response(200)
+        self.send_header('Content-type', 'text/plain')
+        self.end_headers()
+        self.wfile.write(bytes("Server Active", "utf-8"))
 
     def do_POST(self):
         """
@@ -163,29 +167,29 @@ class RequestHandler(BaseHTTPRequestHandler):
         inc = constants.to_dict(
             self.rfile.read(int(self.headers['Content-Length'])).decode('utf-8')
         )
+        self.send_response(200)
+        self.send_header('Content-type', 'application/json')
+        self.end_headers()
 
         if inc["from"] == "broker" and inc["port"] == constants.BROKER_PORT[0]:  # monitoring broker with PORT 8001
-            logging.info(f"Pulse from {inc['port']}")
             zookeeper.brokers[constants.BROKER_PORT[0]] = constants.TIME_LIMIT
 
         elif inc["from"] == "broker" and inc["port"] == constants.BROKER_PORT[1]:  # monitoring broker with PORT 8002
-            logging.info(f"Pulse from {inc['port']}")
             zookeeper.brokers[constants.BROKER_PORT[1]] = constants.TIME_LIMIT
 
         elif inc["from"] == "broker" and inc["port"] == constants.BROKER_PORT[2]:  # monitoring broker with PORT 8003
-            logging.info(f"Pulse from {inc['port']}")
             zookeeper.brokers[constants.BROKER_PORT[2]] = constants.TIME_LIMIT
 
         elif inc["from"] == "producer":  # provide producer info about leader broker
             try:
                 zookeeper.producers.append(inc["port"])
-                inf = constants.to_json(frm="zookeeper", typ="set-leader", port=self.port, data=self.leader)
+                inf = constants.to_json(frm="zookeeper", typ="set-leader", port=zookeeper.port, data=zookeeper.leader)
                 r = requests.post(f"{constants.LOCALHOST}:{inc['port']}", data=inf)
             except:
                 zookeeper.producers.remove(inc["port"])
 
         elif inc["from"] == "consumer":  # detected a new consumer, re-route it to leader broker
-            inf = constants.to_json(frm="zookeeper", typ="set-leader", port=self.port, data=self.leader)
+            inf = constants.to_json(frm="zookeeper", typ="set-leader", port=zookeeper.port, data=zookeeper.leader)
             r = requests.post(f"{constants.LOCALHOST}:{inc['port']}", data=inf)
 
 
