@@ -145,25 +145,31 @@ class Broker:
 
         stash = []
 
+        print("Reading files")
         for i in file_path:
             with open(i, 'r') as f:
                 stash += f.readlines()
 
+        print("Repairing Data")
         for i in range(len(stash)):
             stash[i] = stash[i][:-1]    # removing new line character
 
+        print("Formatting it")
         for i in range(len(stash)):
             stash[i] = json.loads(stash[i])     # converting the json format to dictionaries
 
+        print("Sorting data")
         sorted(stash, key=operator.itemgetter('timestamp'))     # sorting the data based on time stamp
 
         # removing timestamp details from the text
+        print("Extracting msg")
         for i in range(len(stash)):
             stash[i] = stash[i]['msg']
 
+        print("Sending data")
         for i in stash:
             inc = constants.to_json(frm="broker", port=self.addr, typ="publish", topic=topic, data=i)
-            r = requests.post(f"{constants.LOCALHOST}:{port}", data=i)
+            r = requests.post(f"{constants.LOCALHOST}:{port}", data=inc)
 
     def push_to_consumer(self, inc):
         new_inc = inc
