@@ -2,6 +2,7 @@
 __pycache__/
 .idea/
 topics/
+logs/
 
 #Files
 activate.ps1

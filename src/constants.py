@@ -28,23 +28,7 @@ def to_dict(val):
 
 
 '''
-Functionality communications to be enclosed within // // 
-
-eg Leader broker will send a pulse by enclosing it's port within // //
-i.e. for port 8001 the POST message will be  //8001//
-'''
-
-'''
 DAEMON
 False - Process will continue even after parent dies
 True - Process will end after parent dies 
-'''
-
-'''
-{
-    from-port:
-    type:
-    topic-name:
-    data:
-}
 '''

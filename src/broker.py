@@ -1,4 +1,4 @@
-import datetime
+from datetime import  datetime as dt
 import json
 import operator
 import os
@@ -9,6 +9,7 @@ import sys
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import requests
 import constants
+import logging
 
 
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(sys.argv[0]), os.pardir))
@@ -28,7 +29,11 @@ class Broker:
 
         self.topic_dir = Path(BASE_DIR + '\\topics').resolve().as_posix()
         self.src_dir = Path(BASE_DIR + '\\src').resolve().as_posix()
-        self.log_dir = Path(BASE_DIR + '\\logs').resolve().as_posix()
+
+        try:
+            os.mkdir(self.topic_dir)
+        except:
+            pass
 
         self.shutdown = False  # when set true the broker will stop processes
 
@@ -37,18 +42,20 @@ class Broker:
         Generates a dictionary of the existing topics and gets access to its file partitions
         :return:
         """
+        if self.leader:
+            logging.info("Fetching list of topics")
+
         print("Fetching list of topics")
-        if os.path.exists(self.topic_dir):
-            for root, subdirs, files in os.walk(self.topic_dir):
-                for subdir in subdirs:
-                    self.topics[subdir] = []
-                if root != self.topic_dir:
-                    for file in files:
-                        topic_name = Path(root).name
-                        file_dir = Path(self.topic_dir + f'\\{topic_name}\\{file}').resolve().as_posix()
-                        self.topics[topic_name].append(file_dir)
-        else:
-            os.mkdir(self.topic_dir)
+        for root, subdirs, files in os.walk(self.topic_dir):
+            for subdir in subdirs:
+                self.topics[subdir] = []
+            if root != self.topic_dir:
+                for file in files:
+                    topic_name = Path(root).name
+                    file_dir = Path(self.topic_dir + f'\\{topic_name}\\{file}').resolve().as_posix()
+                    self.topics[topic_name].append(file_dir)
+        if self.leader:
+            logging.info("Done")
         print("Done")
 
     def create_topic(self, topic_name, partition_count=3):
@@ -59,6 +66,10 @@ class Broker:
         :return:
         """
         if topic_name not in self.topics:
+
+            if self.leader:
+                logging.info(f"Creating new topic {topic_name} with {partition_count} partitions")
+
             print(f"Creating new topic {topic_name} with {partition_count} partitions")
             topic_dir = Path(self.topic_dir + f'\\{topic_name}').resolve().as_posix()
             os.mkdir(topic_dir)
@@ -68,6 +79,10 @@ class Broker:
                 file_dir = Path(topic_dir + f'\\{i}').resolve().as_posix()
                 open(file_dir, "w").close()
                 self.topics[topic_name].append(file_dir)
+
+            if self.leader:
+                logging.info("Done")
+
             print("Done")
 
     def heartbeat(self):
@@ -75,6 +90,10 @@ class Broker:
         Pings the zookeeper every five seconds
         :return:
         """
+        if self.leader:
+            logging.info("Starting heartbeat")
+
+        print("Starting heartbeat")
         while True:
             time.sleep(constants.INTERVALS)
             inf = constants.to_json(frm="broker", port=self.addr, typ="pulse")
@@ -85,6 +104,9 @@ class Broker:
         Broker will generate its metadata as a message and forward to other brokers
         :return:
         """
+        if self.leader:
+            logging.info("Syncronizing")
+
         print("Syncronizing")
         data = {
             "consumers": self.consumers,
@@ -95,6 +117,10 @@ class Broker:
 
         for i in self.brokers:
             r = requests.post(f"{constants.LOCALHOST}:{i}", data=inc)
+
+        if self.leader:
+            logging.info("Done synchronizing")
+
         print("Done synchronizing")
 
     def thread_send_sync_data(self):
@@ -107,9 +133,15 @@ class Broker:
         Extract data from the sync message sent from broker and update metadata
         :return:
         """
+        if self.leader:
+            logging.info("Synchrozing")
+
         print("Syncronizing")
         self.consumers = data["consumers"]
         self.topics = data["topics"]
+
+        if self.leader:
+            logging.info("Done synchronizing")
         print("Done synchronizing")
 
     def write_to_partition(self, topic_name, msg):
@@ -117,6 +149,9 @@ class Broker:
         Write the message received from publisher to file-system. Writes to the file with the least number of lines
         :return:
         """
+        if self.leader:
+            logging.info(f"Writing to partition - {topic_name}")
+
         print(f"Writing to partition - {topic_name}")
         d = {}
         for i in self.topics[topic_name]:
@@ -134,6 +169,10 @@ class Broker:
                 "msg": msg
                     }
             f.write(f"{json.dumps(data)}\n")
+
+        if self.leader:
+            logging.info(f"Done writing to partition - {topic_name}")
+
         print(f"Done writing to partition - {topic_name}")
 
     def send_from_beginning(self, topic, port):
@@ -145,28 +184,22 @@ class Broker:
 
         stash = []
 
-        print("Reading files")
         for i in file_path:
             with open(i, 'r') as f:
                 stash += f.readlines()
 
-        print("Repairing Data")
         for i in range(len(stash)):
             stash[i] = stash[i][:-1]    # removing new line character
 
-        print("Formatting it")
         for i in range(len(stash)):
             stash[i] = json.loads(stash[i])     # converting the json format to dictionaries
 
-        print("Sorting data")
         sorted(stash, key=operator.itemgetter('timestamp'))     # sorting the data based on time stamp
 
         # removing timestamp details from the text
-        print("Extracting msg")
         for i in range(len(stash)):
             stash[i] = stash[i]['msg']
 
-        print("Sending data")
         for i in stash:
             inc = constants.to_json(frm="broker", port=self.addr, typ="publish", topic=topic, data=i)
             r = requests.post(f"{constants.LOCALHOST}:{port}", data=inc)
@@ -226,6 +259,10 @@ class RequestHandler(BaseHTTPRequestHandler):
 
         elif inc["from"] == "producer":
             if inc["type"] == "register":
+
+                if broker.leader:
+                    logging.info(f"New producer connected - {inc['port']}")
+
                 print(f"New producer connected - {inc['port']}")
                 broker.create_topic(inc["topic"])
                 # sync the metadata
@@ -250,6 +287,10 @@ class RequestHandler(BaseHTTPRequestHandler):
 
         elif inc["from"] == "consumer":
             if inc["type"] == "register":
+
+                if broker.leader:
+                    logging.info(f"New consumer connected - {inc['port']}. Registering consumer")
+
                 print(f"New consumer connected - {inc['port']}. Registering consumer")
                 # added consumer to the pool of consumers and if needed to create topic
                 broker.create_topic(inc["topic"])
@@ -268,17 +309,32 @@ class RequestHandler(BaseHTTPRequestHandler):
                 p.start()
 
             elif inc["type"] == "disconnect":
+
+                if broker.leader:
+                    logging.info(f"Consumer {inc['port']} disconnected. Removing from list of registered consumers")
+
                 print(f"Consumer {inc['port']} disconnected. Removing from list of registered consumers")
                 broker.consumers.remove(inc['port'])
                 broker.thread_send_sync_data()
 
+
 if __name__ == "__main__":
+    logging.basicConfig(
+        filename=Path(BASE_DIR + f'\\logs\\broker-{dt.now().replace(microsecond=0).strftime("%Y-%m-%d %H;%M;%S")}.log').resolve().as_posix(),
+        level=logging.DEBUG,
+        format='%(asctime)s:%(levelname)s:%(message)s'
+    )
+
+
     lead = bool(int(sys.argv[1]))   # leader
     port = int(sys.argv[2])    # index for to select one of the three preset ports
 
     broker = Broker(constants.ZOOKEEPER_PORT, lead, port)
 
     server = HTTPServer(('localhost', port), RequestHandler)
+
+    logging.info(f"Server running on - {server.server_address[0]}:{server.server_address[1]}")
+
     print(f"Server running on - {server.server_address[0]}:{server.server_address[1]}")
     th = threading.Thread(target=server.serve_forever)
     th.daemon = True

@@ -1,3 +1,4 @@
+import logging
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import constants
@@ -9,9 +10,11 @@ import sys
 import subprocess
 import multiprocessing
 from sys import platform
+from datetime import datetime as dt
 
 
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(sys.argv[0]), os.pardir))
+LOG_DIR = Path(BASE_DIR + '\\logs').resolve().as_posix()
 
 
 class ZooKeeper:
@@ -30,6 +33,8 @@ class ZooKeeper:
         Method to call start_broker multiple times and thus spawn the brokers
         :return:
         """
+        logging.info("Starting brokers")
+
         print("Starting brokers")
         leader = self.leader
         for i in self.brokers:
@@ -39,6 +44,9 @@ class ZooKeeper:
             else:
                 # current port obtained from loop does not match chosen leader port; set leader bit to 0
                 self.spawn_broker(i, 0)
+
+        logging.info("Started all brokers")
+
         print("Started all brokers")
 
     @staticmethod
@@ -49,6 +57,8 @@ class ZooKeeper:
         :param leader: If 1, the spawned broker is a leader, 0 for not leader
         :return:
         """
+        logging.info(f"Starting broker with port {port}")
+
         print(f"Starting broker with port {port}")
         broker = Path(BASE_DIR + '\\src\\broker.py').resolve().as_posix()
 
@@ -75,16 +85,23 @@ class ZooKeeper:
         """
         while True:
             if self.brokers[port] == 0:
+                logging.warning(f"Broker Died -- {port}")
+
                 print(f"Broker Died -- {port}")
                 # countdown of broker reached 0 assuming it has crashed, will attempt to spawn new broker
 
                 if port == list(self.brokers.keys())[0]:
+                    logging.warning(f"Leader broker died -- {port} -- {self.leader}")
+
                     print(f"Leader broker died -- {port} -- {self.leader}")
                     # leader broker has died, so elect new leader
                     del self.brokers[port]
                     self.brokers[port] = constants.TIME_LIMIT
 
                     self.leader = self.elect_leader()
+
+                    logging.info(f"Picked new leader -- {self.leader}")
+
                     print(f"Picked new leader -- {self.leader}")
                     # send post request to chosen broker and inform it to become leader and restart the dead broker
                     inc = constants.to_json(frm="zookeeper", typ="set-leader", port=self.port, data=self.leader)
@@ -110,12 +127,16 @@ class ZooKeeper:
         Inform all producers of the update leader
         :return:
         """
+        logging.info("Informing procedures of new leader")
+
         print("Informing procedures of new leader")
         for i in self.producers:
             try:
                 inf = constants.to_json(frm="zookeeper", typ="set-leader", port=self.port, data=self.leader)
                 r = requests.post(f"{constants.LOCALHOST}:{i}", data=inf)
             except:
+                logging.info(f"Could not inform producer with port - {i}. Assuming it has died. Removing it from list of register producers")
+
                 print(f"Could not inform producer with port - {i}. Assuming it has died. Removing it from list of register producers")
                 self.producers.remove(i)
 
@@ -184,28 +205,45 @@ class RequestHandler(BaseHTTPRequestHandler):
 
         elif inc["from"] == "producer":  # provide producer info about leader broker
             if inc["type"] == "disconnect":
+                logging.info(f"Producer {inc['port']} disconnected. Removing from list of registered producers")
+
                 print(f"Producer {inc['port']} disconnected. Removing from list of registered producers")
                 zookeeper.producers.remove(inc["port"])
             else:
-                # try:
-                print(f"New producer has connected - {inc['port']}. Registering it")
-                zookeeper.producers.append(inc["port"])
-                inf = constants.to_json(frm="zookeeper", typ="set-leader", port=zookeeper.port, data=zookeeper.leader)
-                r = requests.post(f"{constants.LOCALHOST}:{inc['port']}", data=inf)
-                # except:
-                #     print(f"Could not communicate with producer - {inc['port']} . Assuming it has died. Removing it from registered producers")
-                #     zookeeper.producers.remove(inc["port"])
+                try:
+                    logging.info(f"New producer has connected - {inc['port']}. Registering it")
+
+                    print(f"New producer has connected - {inc['port']}. Registering it")
+                    zookeeper.producers.append(inc["port"])
+                    inf = constants.to_json(frm="zookeeper", typ="set-leader", port=zookeeper.port, data=zookeeper.leader)
+                    r = requests.post(f"{constants.LOCALHOST}:{inc['port']}", data=inf)
+                except:
+                    logging.info(f"Could not communicate with producer - {inc['port']} . Assuming it has died. Removing it from registered producers")
+                    print(f"Could not communicate with producer - {inc['port']} . Assuming it has died. Removing it from registered producers")
+                    zookeeper.producers.remove(inc["port"])
 
         elif inc["from"] == "consumer":  # detected a new consumer, re-route it to leader broker
+            logging.info(f"New consumer has connected - {inc['port']}")
+
             print(f"New consumer has connected - {inc['port']}")
             inf = constants.to_json(frm="zookeeper", typ="set-leader", port=zookeeper.port, data=zookeeper.leader)
             r = requests.post(f"{constants.LOCALHOST}:{inc['port']}", data=inf)
 
 
 if __name__ == "__main__":
+    logging.basicConfig(
+        filename=Path(BASE_DIR + f'\\logs\\zookeeper-{dt.now().replace(microsecond=0).strftime("%Y-%m-%d %H;%M;%S")}.log').resolve().as_posix(),
+        level=logging.DEBUG,
+        format='%(asctime)s:%(levelname)s:%(message)s'
+    )
+
+
     zookeeper = ZooKeeper()
     zookeeper.run()
 
     server = HTTPServer(('localhost', constants.ZOOKEEPER_PORT), RequestHandler)
+
+    logging.info(f"Server running on {server.server_address[0]}:{server.server_address[1]}")
+
     print(f"Server running on {server.server_address[0]}:{server.server_address[1]}")
     server.serve_forever()
