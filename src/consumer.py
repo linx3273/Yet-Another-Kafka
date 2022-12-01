@@ -3,11 +3,11 @@ import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import constants
 import requests
-import time
+
 
 class Consumer:
     def __init__(self, zoo_addr, topic, typ="register"):
-        self.zoo_addr = "http://" + zoo_addr[0] + ":" + zoo_addr[1]
+        self.zoo_addr = zoo_addr
         self.leader_addr = None
         self.addr = None
         self.topic = topic
@@ -18,27 +18,26 @@ class Consumer:
 
     def query_zoo(self):
         inc = constants.to_json(frm="consumer", port=self.addr)
-        try:
-            r = requests.post(f"{self.zoo_addr}", data=inc)
-        except Exception as e:
-            print("query zoo")
-            print(e)
+        r = requests.post(f"{constants.LOCALHOST}:{self.zoo_addr}", data=inc)
 
     def set_leader_addr(self, port):
-        self.leader_addr = constants.LOCALHOST + f":{port}"
+        self.leader_addr = port
+        print(f"Leader - {self.leader_addr}")
 
     def register_to_leader(self):
+        print(f"Registering to leader")
         inc = constants.to_json(frm="consumer", port=self.addr, typ=self.type, topic=self.topic)
+        r = requests.post(f"{constants.LOCALHOST}:{self.leader_addr}", data=inc)
+
+    def disconnect(self):
         try:
-            r = requests.post(f"{self.leader_addr}", data=inc)
-        except Exception as e:
-            print("reg to lead")
+            if input(">") == "disconnect":
+                inc = constants.to_json(frm="consumer", port=self.addr, typ="disconnect")
+                r = requests.post(f"{constants.LOCALHOST}:{self.leader_addr}", data=inc)
+                print("Disconnected")
+                sys.exit()
+        except KeyboardInterrupt as e:
             print(e)
-
-    def stop_condition(self):
-        if input(">") == "stop":
-            sys.exit()
-
 
 class RequestHandler(BaseHTTPRequestHandler):
     global consumer
@@ -74,7 +73,7 @@ class RequestHandler(BaseHTTPRequestHandler):
 
 if __name__ == "__main__":
     consumer = Consumer(
-                            ['127.0.0.1', '8000'],
+                            constants.ZOOKEEPER_PORT,
                             input("Enter topic name: "),
                             typ=input("Choose between 'register/from-beginning': ")
                         )
@@ -88,4 +87,4 @@ if __name__ == "__main__":
     p.start()
 
     consumer.query_zoo()
-    consumer.stop_condition()
+    consumer.disconnect()

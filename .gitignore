@@ -1,6 +1,7 @@
 #Directories
 __pycache__/
 .idea/
+topics/
 
 #Files
 activate.ps1

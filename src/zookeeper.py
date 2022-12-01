@@ -8,7 +8,6 @@ import os
 import sys
 import subprocess
 import multiprocessing
-import logging
 from sys import platform
 
 
@@ -31,7 +30,7 @@ class ZooKeeper:
         Method to call start_broker multiple times and thus spawn the brokers
         :return:
         """
-        logging.info("Starting brokers")
+        print("Starting brokers")
         leader = self.leader
         for i in self.brokers:
             if leader == i:
@@ -40,8 +39,7 @@ class ZooKeeper:
             else:
                 # current port obtained from loop does not match chosen leader port; set leader bit to 0
                 self.spawn_broker(i, 0)
-        logging.info("Started all brokers")
-        pass
+        print("Started all brokers")
 
     @staticmethod
     def spawn_broker(port, leader):
@@ -51,7 +49,7 @@ class ZooKeeper:
         :param leader: If 1, the spawned broker is a leader, 0 for not leader
         :return:
         """
-        logging.info(f"Starting broker with port {port}")
+        print(f"Starting broker with port {port}")
         broker = Path(BASE_DIR + '\\src\\broker.py').resolve().as_posix()
 
         if platform == "linux" or platform == "linux2":
@@ -77,15 +75,17 @@ class ZooKeeper:
         """
         while True:
             if self.brokers[port] == 0:
-                logging.warning(f"{port} Died")
+                print(f"Broker Died -- {port}")
                 # countdown of broker reached 0 assuming it has crashed, will attempt to spawn new broker
 
                 if port == list(self.brokers.keys())[0]:
+                    print(f"Leader broker died -- {port} -- {self.leader}")
                     # leader broker has died, so elect new leader
                     del self.brokers[port]
                     self.brokers[port] = constants.TIME_LIMIT
 
                     self.leader = self.elect_leader()
+                    print(f"Picked new leader -- {self.leader}")
                     # send post request to chosen broker and inform it to become leader and restart the dead broker
                     inc = constants.to_json(frm="zookeeper", typ="set-leader", port=self.port, data=self.leader)
                     r = requests.post(f"{constants.LOCALHOST}:{self.leader}", data=inc)
@@ -110,11 +110,13 @@ class ZooKeeper:
         Inform all producers of the update leader
         :return:
         """
+        print("Informing procedures of new leader")
         for i in self.producers:
             try:
                 inf = constants.to_json(frm="zookeeper", typ="set-leader", port=self.port, data=self.leader)
                 r = requests.post(f"{constants.LOCALHOST}:{i}", data=inf)
             except:
+                print(f"Could not inform producer with port - {i}. Assuming it has died. Removing it from list of register producers")
                 self.producers.remove(i)
 
     def elect_leader(self):
@@ -181,20 +183,26 @@ class RequestHandler(BaseHTTPRequestHandler):
             zookeeper.brokers[constants.BROKER_PORT[2]] = constants.TIME_LIMIT
 
         elif inc["from"] == "producer":  # provide producer info about leader broker
-            try:
+            if inc["type"] == "disconnect":
+                print(f"Producer {inc['port']} disconnected. Removing from list of registered producers")
+                zookeeper.producers.remove(inc["port"])
+            else:
+                # try:
+                print(f"New producer has connected - {inc['port']}. Registering it")
                 zookeeper.producers.append(inc["port"])
                 inf = constants.to_json(frm="zookeeper", typ="set-leader", port=zookeeper.port, data=zookeeper.leader)
                 r = requests.post(f"{constants.LOCALHOST}:{inc['port']}", data=inf)
-            except:
-                zookeeper.producers.remove(inc["port"])
+                # except:
+                #     print(f"Could not communicate with producer - {inc['port']} . Assuming it has died. Removing it from registered producers")
+                #     zookeeper.producers.remove(inc["port"])
 
         elif inc["from"] == "consumer":  # detected a new consumer, re-route it to leader broker
+            print(f"New consumer has connected - {inc['port']}")
             inf = constants.to_json(frm="zookeeper", typ="set-leader", port=zookeeper.port, data=zookeeper.leader)
             r = requests.post(f"{constants.LOCALHOST}:{inc['port']}", data=inf)
 
 
 if __name__ == "__main__":
-    logging.basicConfig(stream=sys.stdout, level=logging.DEBUG)
     zookeeper = ZooKeeper()
     zookeeper.run()
 

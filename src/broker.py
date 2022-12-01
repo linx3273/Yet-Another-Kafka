@@ -21,7 +21,6 @@ class Broker:
         self.addr = addr  # will hold its own PORT
 
         self.topics = {}  # holds topic name and file pointers
-        self.producers = []  # holds a list of addresses of all producers
         self.consumers = []
 
         self.brokers = constants.BROKER_PORT
@@ -38,6 +37,7 @@ class Broker:
         Generates a dictionary of the existing topics and gets access to its file partitions
         :return:
         """
+        print("Fetching list of topics")
         if os.path.exists(self.topic_dir):
             for root, subdirs, files in os.walk(self.topic_dir):
                 for subdir in subdirs:
@@ -49,6 +49,7 @@ class Broker:
                         self.topics[topic_name].append(file_dir)
         else:
             os.mkdir(self.topic_dir)
+        print("Done")
 
     def create_topic(self, topic_name, partition_count=3):
         """
@@ -58,6 +59,7 @@ class Broker:
         :return:
         """
         if topic_name not in self.topics:
+            print(f"Creating new topic {topic_name} with {partition_count} partitions")
             topic_dir = Path(self.topic_dir + f'\\{topic_name}').resolve().as_posix()
             os.mkdir(topic_dir)
             self.topics[topic_name] = []
@@ -66,6 +68,7 @@ class Broker:
                 file_dir = Path(topic_dir + f'\\{i}').resolve().as_posix()
                 open(file_dir, "w").close()
                 self.topics[topic_name].append(file_dir)
+            print("Done")
 
     def heartbeat(self):
         """
@@ -82,8 +85,8 @@ class Broker:
         Broker will generate its metadata as a message and forward to other brokers
         :return:
         """
+        print("Syncronizing")
         data = {
-            "producers": self.producers,
             "consumers": self.consumers,
             "topics": self.topics
         }
@@ -92,6 +95,7 @@ class Broker:
 
         for i in self.brokers:
             r = requests.post(f"{constants.LOCALHOST}:{i}", data=inc)
+        print("Done synchronizing")
 
     def thread_send_sync_data(self):
         p = threading.Thread(target=self.send_sync_data)
@@ -103,15 +107,17 @@ class Broker:
         Extract data from the sync message sent from broker and update metadata
         :return:
         """
-        self.producers = data["producers"]
+        print("Syncronizing")
         self.consumers = data["consumers"]
         self.topics = data["topics"]
+        print("Done synchronizing")
 
     def write_to_partition(self, topic_name, msg):
         """
         Write the message received from publisher to file-system. Writes to the file with the least number of lines
         :return:
         """
+        print(f"Writing to partition - {topic_name}")
         d = {}
         for i in self.topics[topic_name]:
             d[i] = 0
@@ -128,6 +134,7 @@ class Broker:
                 "msg": msg
                     }
             f.write(f"{json.dumps(data)}\n")
+        print(f"Done writing to partition - {topic_name}")
 
     def send_from_beginning(self, topic, port):
         """
@@ -196,6 +203,7 @@ class RequestHandler(BaseHTTPRequestHandler):
 
         if inc['from'] == "zookeeper":
             if inc["type"] == "set-leader":
+                print("Set to leader")
                 # receives instruction from zookeeper to become the leader
                 broker.leader = 1
 
@@ -212,25 +220,31 @@ class RequestHandler(BaseHTTPRequestHandler):
 
         elif inc["from"] == "producer":
             if inc["type"] == "register":
+                print(f"New producer connected - {inc['port']}")
                 broker.create_topic(inc["topic"])
-                broker.producers.append(inc["port"])
                 # sync the metadata
                 broker.thread_send_sync_data()
 
             elif inc["type"] == "publish":
-                # collects the message and adds to queue + stores to partition
-                # will also push data to other brokers
-                if inc['data'] == "pls_die_leader":
-                    sys.exit()
-
                 # sending published data to partitions
                 p = threading.Thread(target=broker.write_to_partition, args=[inc['topic'], inc['data']])
                 p.start()
 
                 # forwarding data to consumers
+                inc['from'] = 'broker'
+                inc['port'] = broker.addr
+
+                new_inc = json.dumps(inc)
+                for i in broker.consumers:
+                    try:
+                        r = requests.post(f"{constants.LOCALHOST}:{i}", data=new_inc)
+                    except:
+                        # connection failed meaning broker might have died
+                        broker.consumers.remove(i)
 
         elif inc["from"] == "consumer":
             if inc["type"] == "register":
+                print(f"New consumer connected - {inc['port']}. Registering consumer")
                 # added consumer to the pool of consumers and if needed to create topic
                 broker.create_topic(inc["topic"])
                 broker.consumers.append(inc["port"])
@@ -247,6 +261,10 @@ class RequestHandler(BaseHTTPRequestHandler):
                 p = threading.Thread(target=broker.send_from_beginning, args=[inc["topic"], inc["port"]])
                 p.start()
 
+            elif inc["type"] == "disconnect":
+                print(f"Consumer {inc['port']} disconnected. Removing from list of registered consumers")
+                broker.consumers.remove(inc['port'])
+                broker.thread_send_sync_data()
 
 if __name__ == "__main__":
     lead = bool(int(sys.argv[1]))   # leader
